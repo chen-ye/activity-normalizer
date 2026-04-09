@@ -43,6 +43,10 @@ class IntervalsClient:
             # Skip records from STRAVA as they lack metadata in the API
             if item.get("source") == "STRAVA":
                 continue
+
+            # Skip records that don't have a linked Strava ID (since strava is manually curated + source of truth)
+            if item.get("strava_id") is None:
+                continue
                 
             # Skip malformed records without names or dates
             name = item.get("name")

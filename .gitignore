@@ -22,6 +22,7 @@ __pycache__/
 
 # Output files
 gc-changes.json
+rwgps-changes.json
 gear-mappings.json
 rwgps_tokens.json
 

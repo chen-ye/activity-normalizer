@@ -2,7 +2,7 @@ import json
 import os
 from curl_cffi import requests
 from datetime import date, datetime
-from typing import List
+from typing import List, Optional
 from models import Activity
 
 class RWGPSClient:
@@ -22,7 +22,6 @@ class RWGPSClient:
             try:
                 with open(self.token_path, "r") as f:
                     data = json.load(f)
-                    # Support both nested and flat token storage
                     self.auth_token = data.get("auth_token", {}).get("auth_token") or data.get("auth_token")
                     if self.auth_token:
                         print(f"Restored Ride with GPS session from {self.token_path}")
@@ -67,53 +66,67 @@ class RWGPSClient:
         }
 
     def get_activities(self, oldest: date, newest: date) -> List[Activity]:
-        # Using the base trips.json endpoint which returns the 100 most recent trips
-        url = f"{self.base_url}/api/v1/trips.json"
+        # Using the sync endpoint to fetch created/updated items since a specific date
+        url = f"{self.base_url}/api/v1/sync.json"
         params = {
-            "page": 1,
-            "page_size": 20
+            "since": oldest.isoformat(),
+            "assets": "trips"
         }
         response = requests.get(url, headers=self.auth_headers, params=params, impersonate="chrome")
         response.raise_for_status()
-        
+
         activities = []
         data = response.json()
-        
-        # API v1 uses 'trips' key, some endpoints use 'results'
-        trips = data.get("trips") or data.get("results")
-        if trips is None and isinstance(data, list):
-            trips = data
-        
-        if not trips:
-            return []
-        
-        for item in trips:
-            departed_at = item.get("departed_at")
+
+        items = data.get("items", [])
+
+        for item in items:
+            if item.get("item_type") != "trip" or item.get("action") == "deleted":
+                continue
+
+            item_url = item.get("item_url")
+            if not item_url:
+                continue
+
+            # Fetch the actual trip details
+            trip_response = requests.get(item_url, headers=self.auth_headers, impersonate="chrome")
+            if trip_response.status_code != 200:
+                print(f"Failed to fetch trip details from {item_url}: {trip_response.status_code}")
+                continue
+
+            trip_data = trip_response.json().get("trip")
+            if not trip_data:
+                continue
+
+            departed_at = trip_data.get("departed_at")
             if not departed_at:
                 continue
-            
+
             # Parse as UTC datetime
             start_time = datetime.fromisoformat(departed_at.replace("Z", "+00:00"))
-            
+
             # Filter by date range (using UTC date)
             if oldest <= start_time.date() <= newest:
                 activities.append(Activity(
-                    platform_id=str(item.get("id")),
-                    name=item.get("name", "Unknown Trip"),
+                    platform_id=str(trip_data.get("id")),
+                    name=trip_data.get("name", "Unknown Trip"),
                     start_time=start_time,
-                    duration_sec=item.get("duration", 0),
-                    type="Ride",
-                    local_start_date_str=departed_at
+                    duration_sec=trip_data.get("duration", 0),
+                    type=trip_data.get("activity_type", "Ride"),
+                    local_start_date_str=departed_at,
+                    gear_id=str(trip_data.get("gear_id")) if trip_data.get("gear_id") else None
                 ))
         return activities
 
-    def update_activity_name(self, activity_id: str, new_name: str):
+    def update_activity(self, activity_id: str, name: str, gear_id: Optional[str] = None, activity_type: Optional[str] = None):
         # Using the direct trips endpoint with PATCH as suggested by user feedback
         url = f"{self.base_url}/trips/{activity_id}"
-        payload = {
-            "trip": {
-                "name": new_name
-            }
-        }
+        trip_payload = {"name": name}
+        if gear_id:
+            trip_payload["gear_id"] = gear_id
+        if activity_type:
+            trip_payload["activity_type"] = activity_type
+            
+        payload = {"trip": trip_payload}
         response = requests.patch(url, headers=self.auth_headers, json=payload, impersonate="chrome")
         response.raise_for_status()
