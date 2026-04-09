@@ -23,6 +23,7 @@ __pycache__/
 # Output files
 gc-changes.json
 gear-mappings.json
+rwgps_tokens.json
 
 # Tooling
 .pytest_cache/

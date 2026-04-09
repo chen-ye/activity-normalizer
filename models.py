@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 @dataclass
@@ -19,7 +19,17 @@ class Activity:
 
     def matches(self, other: 'Activity') -> bool:
         """
-        Fuzzy match fallback.
+        Fuzzy match fallback. Handles naive vs aware datetimes by converting both to UTC.
         """
-        time_diff = abs((self.start_time - other.start_time).total_seconds())
+        # Ensure self.start_time is aware (assume UTC if naive)
+        s_time = self.start_time
+        if s_time.tzinfo is None:
+            s_time = s_time.replace(tzinfo=timezone.utc)
+            
+        # Ensure other.start_time is aware (assume UTC if naive)
+        o_time = other.start_time
+        if o_time.tzinfo is None:
+            o_time = o_time.replace(tzinfo=timezone.utc)
+
+        time_diff = abs((s_time - o_time).total_seconds())
         return time_diff <= 120

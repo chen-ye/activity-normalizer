@@ -22,24 +22,25 @@ def main():
     intervals_api_key = os.getenv("INTERVALS_API_KEY")
     
     rwgps_api_key = os.getenv("RWGPS_API_KEY")
-    rwgps_auth_token = os.getenv("RWGPS_AUTH_TOKEN")
+    rwgps_email = os.getenv("RWGPS_EMAIL")
+    rwgps_password = os.getenv("RWGPS_PASSWORD")
 
     garmin_client = None
     if not args.offline_garmin:
         garmin_email = os.getenv("GARMIN_EMAIL")
         garmin_password = os.getenv("GARMIN_PASSWORD")
-        if not all([intervals_athlete_id, intervals_api_key, garmin_email, garmin_password, rwgps_api_key, rwgps_auth_token]):
+        if not all([intervals_athlete_id, intervals_api_key, garmin_email, garmin_password, rwgps_api_key, rwgps_email, rwgps_password]):
             print("Error: Missing environment variables for online mode. Please check your .env file.")
             return
         garmin_client = GarminClient(garmin_email, garmin_password)
     else:
-        if not all([intervals_athlete_id, intervals_api_key, rwgps_api_key, rwgps_auth_token]):
+        if not all([intervals_athlete_id, intervals_api_key, rwgps_api_key, rwgps_email, rwgps_password]):
             print("Error: Missing environment variables for offline mode. Please check your .env file.")
             return
 
     # Initialize clients
     intervals_client = IntervalsClient(intervals_athlete_id, intervals_api_key)
-    rwgps_client = RWGPSClient(rwgps_api_key, rwgps_auth_token)
+    rwgps_client = RWGPSClient(rwgps_api_key, rwgps_email, rwgps_password)
 
     # Initialize and run synchronizer
     sync = ActivitySynchronizer(intervals_client, garmin_client, rwgps_client)
