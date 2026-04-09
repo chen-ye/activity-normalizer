@@ -81,6 +81,7 @@ class IntervalsClient:
                 strava_id=str(item.get("strava_id")) if item.get("strava_id") else None,
                 local_start_date_str=date_to_use, 
                 gear_id=gear_id,
-                gear_name=gear_name
+                gear_name=gear_name,
+                description=item.get("description")
             ))
         return activities

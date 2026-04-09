@@ -16,6 +16,7 @@ class Activity:
     local_start_date_str: Optional[str] = None # Exact ISO string from API
     gear_id: Optional[str] = None
     gear_name: Optional[str] = None
+    description: Optional[str] = None
 
     def matches(self, other: 'Activity') -> bool:
         """

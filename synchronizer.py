@@ -1,12 +1,13 @@
 import json
 import os
 import re
+import glob
 try:
     import readline
 except ImportError:
     pass
-from datetime import date
-from typing import List, Optional, Dict
+from datetime import date, timezone
+from typing import List, Optional, Dict, Tuple
 from clients.intervals_client import IntervalsClient
 from clients.garmin_client import GarminClient
 from clients.rwgps_client import RWGPSClient
@@ -70,6 +71,7 @@ class ActivitySynchronizer:
             r"^(Morning|Lunch|Afternoon|Evening|Night) (Ride|Run|Walk|Hike|Swim|Workout|Weight Training|Yoga|Activity|Cycle|Gravel Ride|E-Bike Ride|Mountain Bike Ride|Virtual Ride|Trip|Session).*",
             re.IGNORECASE
         )
+        self._garmin_export_map: Optional[List[Tuple[float, str]]] = None
 
     def _load_gear_mappings(self) -> Dict[str, Dict[str, str]]:
         if os.path.exists(self.gear_mapping_file):
@@ -80,6 +82,64 @@ class ActivitySynchronizer:
     def _save_gear_mappings(self):
         with open(self.gear_mapping_file, "w") as f:
             json.dump(self.gear_mappings, f, indent=2)
+
+    def _load_garmin_export_map(self):
+        if self._garmin_export_map is not None:
+            return
+        
+        print("Loading Garmin Connect GDPR export for ID resolution...")
+        export_map = []
+        # Look for export files in gc-export/
+        export_files = glob.glob("gc-export/*summarizedActivities.json")
+        for file_path in export_files:
+            try:
+                with open(file_path, "r") as f:
+                    data = json.load(f)
+                    # GDPR export structure is an array containing an object with summarizedActivitiesExport
+                    for export_obj in data:
+                        activities = export_obj.get("summarizedActivitiesExport", [])
+                        for activity in activities:
+                            activity_id = str(activity.get("activityId"))
+                            start_time_gmt = activity.get("startTimeGmt")
+                            if activity_id and start_time_gmt:
+                                # startTimeGmt is in ms
+                                timestamp = start_time_gmt / 1000.0
+                                export_map.append((timestamp, activity_id))
+            except Exception as e:
+                print(f"Error loading Garmin export file {file_path}: {e}")
+        
+        self._garmin_export_map = export_map
+        print(f"Loaded {len(export_map)} activities from Garmin export files.")
+
+    def _resolve_garmin_activity_id(self, truth: Activity) -> str:
+        if not truth.external_id:
+            return ""
+        
+        # If the external_id is already a numeric ID, return it
+        if not truth.external_id.endswith(".fit"):
+            return truth.external_id
+        
+        # Otherwise, we need to resolve it from the GDPR export using start time
+        self._load_garmin_export_map()
+        
+        # truth.start_time is timezone-aware UTC datetime
+        target_timestamp = truth.start_time.timestamp()
+        
+        best_match = None
+        min_diff = 120 # 2 minute tolerance
+        
+        for ts, activity_id in self._garmin_export_map:
+            diff = abs(ts - target_timestamp)
+            if diff < min_diff:
+                min_diff = diff
+                best_match = activity_id
+        
+        if best_match:
+            print(f"[Garmin] Resolved filename {truth.external_id} to activity ID {best_match} (diff: {min_diff:.1f}s)")
+            return best_match
+        
+        print(f"[Garmin] Could not resolve filename {truth.external_id} from export (no matching start time)")
+        return truth.external_id
 
     def _get_garmin_gear_id(self, truth: Activity) -> str:
         if not truth.gear_id:
@@ -168,10 +228,13 @@ class ActivitySynchronizer:
             # Handle Garmin Sync
             if offline_garmin:
                 if truth.source in ["GARMIN", "GARMIN_CONNECT"] and truth.external_id:
+                    gc_id = self._resolve_garmin_activity_id(truth)
                     gc_gear_id = self._get_garmin_gear_id(truth)
                     gc_changes.append({
-                        "garmin_activity_id": truth.external_id,
+                        "intervals_icu_id": truth.platform_id,
+                        "garmin_activity_id": gc_id,
                         "name": truth.name,
+                        "description": truth.description,
                         "gear_id": gc_gear_id,
                         "activity_type": self._map_to_gc_type(truth.type)
                     })
@@ -182,7 +245,9 @@ class ActivitySynchronizer:
             if offline_rwgps:
                 rwgps_gear_id = self._get_rwgps_gear_id(truth)
                 rwgps_changes.append({
+                    "intervals_icu_id": truth.platform_id,
                     "name": truth.name,
+                    "description": truth.description,
                     "local_start_date_str": truth.local_start_date_str,
                     "start_time": truth.start_time.isoformat() if truth.start_time else None,
                     "duration_sec": truth.duration_sec,
@@ -243,11 +308,16 @@ class ActivitySynchronizer:
             print(f"[Ride with GPS] No match found for '{truth.name}' ({truth.start_time} UTC)")
 
     def _apply_update_garmin(self, truth: Activity, target: Activity, client, dry_run: bool):
-        if truth.name != target.name:
-            print(f"[Garmin] Updating name: '{target.name}' -> '{truth.name}'")
+        needs_update = (
+            truth.name != target.name or
+            (truth.description is not None and truth.description != target.description)
+        )
+        
+        if needs_update:
+            print(f"[Garmin] Updating: name='{truth.name}', description='{truth.description[:30] if truth.description else None}...'")
             if not dry_run:
                 try:
-                    client.update_activity_name(target.platform_id, truth.name)
+                    client.update_activity(target.platform_id, name=truth.name, description=truth.description)
                 except Exception as e:
                     print(f"[Garmin] Error updating {target.platform_id}: {e}")
         else:
@@ -257,18 +327,18 @@ class ActivitySynchronizer:
         rwgps_type = self._map_to_rwgps_type(truth.type)
         rwgps_gear_id = self._get_rwgps_gear_id(truth)
         
-        # We check for differences in name, type, and gear
         needs_update = (
             truth.name != target.name or
             rwgps_type != target.type or
-            (rwgps_gear_id and rwgps_gear_id != target.gear_id)
+            (rwgps_gear_id and rwgps_gear_id != target.gear_id) or
+            (truth.description is not None and truth.description != target.description)
         )
         
         if needs_update:
-            print(f"[Ride with GPS] Updating: name='{truth.name}', type='{rwgps_type}', gear='{rwgps_gear_id}'")
+            print(f"[Ride with GPS] Updating: name='{truth.name}', type='{rwgps_type}', gear='{rwgps_gear_id}', description='{truth.description[:30] if truth.description else None}...'")
             if not dry_run:
                 try:
-                    client.update_activity(target.platform_id, name=truth.name, gear_id=rwgps_gear_id, activity_type=rwgps_type)
+                    client.update_activity(target.platform_id, name=truth.name, gear_id=rwgps_gear_id, activity_type=rwgps_type, description=truth.description)
                 except Exception as e:
                     print(f"[Ride with GPS] Error updating {target.platform_id}: {e}")
         else:

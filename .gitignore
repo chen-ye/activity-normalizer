@@ -20,6 +20,9 @@ __pycache__/
 *.swp
 *.swo
 
+# Input files
+gc-export/
+
 # Output files
 gc-changes.json
 rwgps-changes.json

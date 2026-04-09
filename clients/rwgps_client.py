@@ -114,11 +114,12 @@ class RWGPSClient:
                     duration_sec=trip_data.get("duration", 0),
                     type=trip_data.get("activity_type", "Ride"),
                     local_start_date_str=departed_at,
-                    gear_id=str(trip_data.get("gear_id")) if trip_data.get("gear_id") else None
+                    gear_id=str(trip_data.get("gear_id")) if trip_data.get("gear_id") else None,
+                    description=trip_data.get("description")
                 ))
         return activities
 
-    def update_activity(self, activity_id: str, name: str, gear_id: Optional[str] = None, activity_type: Optional[str] = None):
+    def update_activity(self, activity_id: str, name: str, gear_id: Optional[str] = None, activity_type: Optional[str] = None, description: Optional[str] = None):
         # Using the direct trips endpoint with PATCH as suggested by user feedback
         url = f"{self.base_url}/trips/{activity_id}"
         trip_payload = {"name": name}
@@ -126,6 +127,8 @@ class RWGPSClient:
             trip_payload["gear_id"] = gear_id
         if activity_type:
             trip_payload["activity_type"] = activity_type
+        if description is not None:
+            trip_payload["description"] = description
             
         payload = {"trip": trip_payload}
         response = requests.patch(url, headers=self.auth_headers, json=payload, impersonate="chrome")

@@ -59,5 +59,5 @@ class GarminClient:
                 ))
         return activities
 
-    def update_activity_name(self, activity_id: str, new_name: str):
-        self.client.update_activity(activity_id, activity_name=new_name)
+    def update_activity(self, activity_id: str, name: str, description: Optional[str] = None):
+        self.client.update_activity(activity_id, activity_name=name, description=description)

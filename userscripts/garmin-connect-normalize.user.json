@@ -1,0 +1,235 @@
+// ==UserScript==
+// @name         Garmin Connect Bulk JSON Updater (v5.0 - Auto Auth, Gear Replace, Validation)
+// @namespace    http://tampermonkey.net/
+// @version      5.0
+// @description  Update GC activities with CSRF interception, v2 gear replacement, and type validation
+// @author       You
+// @match        https://connect.garmin.com/*
+// @run-at       document-start
+// @grant        none
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    window.__gc_csrf_token = null;
+
+    // --- 1. COMPREHENSIVE ACTIVITY TYPE LIST ---
+    const VALID_ACTIVITY_TYPES = new Set(Object.values({
+        Running: "running", IndoorRunning: "indoor_running", ObstacleRun: "obstacle_run",
+        StreetRunning: "street_running", TrackRunning: "track_running", TrailRunning: "trail_running",
+        TreadmillRunning: "treadmill_running", UltraRun: "ultra_run", VirtualRun: "virtual_run",
+        Cycling: "cycling", Bmx: "bmx", Cyclocross: "cyclocross", DownhillBiking: "downhill_biking",
+        EBikeFitness: "e_bike_fitness", EBikeMountain: "e_bike_mountain", GravelCycling: "gravel_cycling",
+        HandCycling: "hand_cycling", IndoorCycling: "indoor_cycling", IndoorHandCycling: "indoor_hand_cycling",
+        MountainBiking: "mountain_biking", RecumbentCycling: "recumbent_cycling", RoadBiking: "road_biking",
+        TrackCycling: "track_cycling", VirtualRide: "virtual_ride", EnduroMtb: "enduro_mtb",
+        EEnduroMtb: "e_enduro_mtb", FitnessEquip: "fitness_equipment", Bouldering: "bouldering",
+        Cardio: "indoor_cardio", Dance: "dance", Elliptical: "elliptical", Hiit: "hiit",
+        IndoorClimbing: "indoor_climbing", IndoorRowing: "indoor_rowing", OnShoreGrinding: "onshore_grinding",
+        OnShoreGrindingV2: "onshore_grinding_v2", JumpRope: "jump_rope", Pilates: "pilates",
+        StrengthTraining: "strength_training", Yoga: "yoga", Mobility: "mobility", Swimming: "swimming",
+        LapSwimming: "lap_swimming", OpenWaterSwimming: "open_water_swimming", Walking: "walking",
+        CasualWalking: "casual_walking", SpeedWalking: "speed_walking", Hiking: "hiking",
+        Rucking: "rucking", Diving: "diving", ApneaDiving: "apnea_diving", PoolApnea: "pool_apnea",
+        ApneaHunting: "apnea_hunting", CcrDiving: "ccr_diving", GaugeDiving: "gauge_diving",
+        MultiGasDiving: "multi_gas_diving", SingleGasDiving: "single_gas_diving", WinterSports: "winter_sports",
+        BackcountrySki: "backcountry_skiing_snowboarding_ws", BackcountrySkiing: "backcountry_skiing",
+        BackcountrySnowboarding: "backcountry_snowboarding", CrossCountrySkiing: "cross_country_skiing_ws",
+        ResortSkiing: "resort_skiing", ResortSkiSnowboard: "resort_skiing_snowboarding_ws",
+        ResortSnowboarding: "resort_snowboarding", SkateSkiing: "skate_skiing_ws", Skating: "skating_ws",
+        Snowmobiling: "snowmobiling_ws", SnowShoeing: "snow_shoe_ws", WaterSports: "water_sports",
+        Boating: "boating_v2", Fishing: "fishing_v2", Kayaking: "kayaking_v2", Kiteboarding: "kiteboarding_v2",
+        OffShoreGrinding: "offshore_grinding", OffShoreGrindingV2: "offshore_grinding_v2", Paddling: "paddling_v2",
+        Rowing: "rowing_v2", Sailing: "sailing_v2", Snorkeling: "snorkeling",
+        StandUpPaddleboarding: "stand_up_paddleboarding_v2", Surfing: "surfing", SurfingV2: "surfing_v2",
+        Wakeboarding: "wakeboarding", WakeboardingV2: "wakeboarding_v2", Wakesurfing: "wakesurfing",
+        Waterskiing: "waterskiing", Watertubing: "water_tubing", WhitewaterRafting: "whitewater_rafting_v2",
+        Windsurfing: "windsurfing", WindsurfingV2: "windsurfing_v2", TeamSports: "team_sports",
+        AmericanFootball: "american_football", Baseball: "baseball", Basketball: "basketball", Cricket: "cricket",
+        FieldHockey: "field_hockey", IceHockey: "ice_hockey", Lacrosse: "lacrosse", Rugby: "rugby",
+        Soccer: "soccer", Softball: "softball", UltimateDisc: "ultimate_disc", Volleyball: "volleyball",
+        RacketSports: "racket_sports", Badminton: "badminton", Padel: "paddelball", Pickleball: "pickleball",
+        PlatformTennis: "platform_tennis", Racquetball: "racquetball", Squash: "squash", TableTennis: "table_tennis",
+        TennisV2: "tennis_v2", Parasports: "para_sports", WheelchairPushRun: "wheelchair_push_run",
+        WheelchairPushWalk: "wheelchair_push_walk", MultiSport: "multi_sport",
+        BikeToRunTransition: "bikeToRunTransition", BikeToRunTransitionV2: "bikeToRunTransition_v2",
+        RunToBikeTransition: "runToBikeTransition_v2", RunToBikeTransitionV2: "runToBikeTransition",
+        SwimToBikeTransition: "swimToBikeTransition", SwimToBikeTransitionV2: "swimToBikeTransition_v2",
+        Transition: "transition", TransitionV2: "transition_v2", Other: "other", Archery: "archery",
+        Atv: "atv", AtvV2: "atv_v2", AutoRacing: "auto_racing", Boxing: "boxing", Breathwork: "breathwork",
+        DiscGolf: "disc_golf", Driving: "driving_general", Esport: "e_sport", FloorClimbing: "floor_climbing",
+        Flying: "flying", Golf: "golf", HangGliding: "hang_gliding", HorsebackRiding: "horseback_riding",
+        Hunting: "hunting", HuntingFishing: "hunting_fishing", InlineSkating: "inline_skating",
+        Meditation: "meditation", MixedMartialArts: "mixed_martial_arts", Motocross: "motocross",
+        MotocrossV2: "motocross_v2", Motorcycling: "motorcycling", MotorcyclingV2: "motorcycling_v2",
+        Mountaineering: "mountaineering", Overland: "overland", RcDrone: "rc_drone", RockClimbing: "rock_climbing",
+        SkyDiving: "sky_diving", Shooting: "shooting", StairClimbing: "stair_climbing", Stopwatch: "stop_watch",
+        Uncategorized: "uncategorized", WingsuitFlying: "wingsuit_flying", Safety: "safety",
+        Assistance: "assistance", Emergency: "emergency", IncidentDetected: "incident_detected"
+    }));
+
+    // --- 2. THE INTERCEPTORS ---
+    const originalFetch = window.fetch;
+    window.fetch = async function(...args) {
+        if (args[1] && args[1].headers) {
+            let csrf = null;
+            const headers = args[1].headers;
+            
+            if (headers instanceof Headers) {
+                csrf = headers.get('connect-csrf-token');
+            } else {
+                const key = Object.keys(headers).find(k => k.toLowerCase() === 'connect-csrf-token');
+                if (key) csrf = headers[key];
+            }
+
+            if (csrf && !window.__gc_csrf_token) {
+                window.__gc_csrf_token = csrf;
+                updateAuthStatus();
+            }
+        }
+        return originalFetch.apply(this, args);
+    };
+
+    const originalSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
+    XMLHttpRequest.prototype.setRequestHeader = function(header, value) {
+        if (header.toLowerCase() === 'connect-csrf-token' && !window.__gc_csrf_token) {
+            window.__gc_csrf_token = value;
+            updateAuthStatus();
+        }
+        return originalSetRequestHeader.apply(this, arguments);
+    };
+
+    // --- 3. THE UI ---
+    document.addEventListener("DOMContentLoaded", () => {
+        const panel = document.createElement('div');
+        panel.style.cssText = `
+            position: fixed; bottom: 20px; right: 20px; z-index: 9999;
+            background: #fff; padding: 15px; border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15); font-family: sans-serif;
+            width: 320px; border: 1px solid #ccc; color: #333;
+        `;
+        
+        panel.innerHTML = `
+            <h4 style="margin: 0 0 10px 0; color: #007cc3;">GC Bulk Updater</h4>
+            <div id="gc-auth-status" style="margin-bottom: 10px; font-size: 13px; font-weight: bold; color: orange;">
+                ⏳ Waiting for CSRF token... (Click around if it takes too long)
+            </div>
+            <input type="file" id="gc-upload-json" accept=".json" style="width:100%; margin-bottom: 10px;" disabled>
+            <div id="gc-log" style="height: 150px; overflow-y: auto; background: #f4f4f4; padding: 8px; font-size: 12px; border: 1px solid #eee; border-radius: 4px;"></div>
+        `;
+        document.body.appendChild(panel);
+
+        const fileInput = document.getElementById('gc-upload-json');
+        const logBox = document.getElementById('gc-log');
+
+        function log(msg) {
+            logBox.innerHTML += `<div style="margin-bottom: 4px;">${msg}</div>`;
+            logBox.scrollTop = logBox.scrollHeight;
+        }
+
+        // 4. Handle file upload
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            if (!window.__gc_csrf_token) {
+                log(`<span style="color:red">❌ CSRF token not captured yet.</span>`);
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = async (event) => {
+                try {
+                    const data = JSON.parse(event.target.result);
+                    if (!Array.isArray(data)) throw new Error("Root JSON must be an array.");
+                    log(`<b>Loaded ${data.length} activities. Processing...</b>`);
+                    await processActivities(data, window.__gc_csrf_token);
+                    log("<b>✅ Finished processing all activities.</b>");
+                } catch (err) {
+                    log(`<span style="color:red">Error parsing JSON: ${err.message}</span>`);
+                }
+            };
+            reader.readAsText(file);
+        });
+
+        // 5. API Processor
+        async function processActivities(activities, csrfToken) {
+            const commonHeaders = {
+                'accept': '*/*',
+                'content-type': 'application/json',
+                'connect-csrf-token': csrfToken
+            };
+
+            for (const act of activities) {
+                const { garmin_activity_id, name, gear_id, activity_type } = act;
+                let isTypeValid = true;
+                let hasActUpdates = false;
+                
+                try {
+                    // Task A: Update Name & Activity Type
+                    const payload = { activityId: Number(garmin_activity_id) };
+                    
+                    if (name) {
+                        payload.activityName = name;
+                        hasActUpdates = true;
+                    }
+                    
+                    if (activity_type) {
+                        if (!VALID_ACTIVITY_TYPES.has(activity_type)) {
+                            log(`<span style="color:#d97706">⚠️ [${garmin_activity_id}]: Unknown activity_type "${activity_type}". Skipping type update.</span>`);
+                            isTypeValid = false;
+                        } else {
+                            payload.activityTypeDTO = { typeKey: activity_type };
+                            hasActUpdates = true;
+                        }
+                    }
+
+                    if (hasActUpdates) {
+                        const actRes = await fetch(`/gc-api/activity-service/activity/${garmin_activity_id}`, {
+                            method: 'PUT',
+                            headers: commonHeaders,
+                            credentials: 'same-origin',
+                            body: JSON.stringify(payload)
+                        });
+                        
+                        if (!actRes.ok) throw new Error(`Activity update failed (${actRes.status})`);
+                        
+                        let updateMsg = name ? "Name " : "";
+                        updateMsg += (name && isTypeValid && activity_type) ? "& " : "";
+                        updateMsg += (isTypeValid && activity_type) ? "Type " : "";
+                        log(`[<a href="/modern/activity/${garmin_activity_id}" target="_blank">${garmin_activity_id}</a>]: ${updateMsg}updated.`);
+                    }
+
+                    // Task B: Replace Associated Gear
+                    if (gear_id) {
+                        const gearRes = await fetch(`/gc-api/gear-service/activity/v2/${garmin_activity_id}/associated-gear`, {
+                            method: 'PUT',
+                            headers: commonHeaders,
+                            credentials: 'same-origin',
+                            body: JSON.stringify([gear_id])
+                        });
+                        
+                        if (!gearRes.ok) throw new Error(`Gear replacement failed (${gearRes.status})`);
+                        log(`[<a href="/modern/activity/${garmin_activity_id}" target="_blank">${garmin_activity_id}</a>]: Gear replaced.`);
+                    }
+                    
+                    // Rate Limiter
+                    await new Promise(r => setTimeout(r, 500)); 
+                    
+                } catch (err) {
+                    log(`<span style="color:red">❌ [${garmin_activity_id}]: ${err.message}</span>`);
+                }
+            }
+        }
+    });
+
+    function updateAuthStatus() {
+        const statusEl = document.getElementById('gc-auth-status');
+        const fileInput = document.getElementById('gc-upload-json');
+        if (statusEl && fileInput) {
+            statusEl.innerHTML = `✅ Token captured. Ready to upload.`;
+            statusEl.style.color = "green";
+            fileInput.disabled = false;
+        }
+    }
+})();
