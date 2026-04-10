@@ -25,6 +25,13 @@ Official platform APIs range from "incomplete" to "actively hostile", so offline
 2. Configure environemnt variables (you can copy the .env.example that is checked in)
 3. Run the script. Example: `uv run python main.py --days 120 --dry-run --offline-garmin --offline-rwgps`
 
+### Resolving Garmin Connect Activity IDs (gc-export)
+In some cases, Intervals.icu provides the `.fit` filename instead of a numeric Garmin Connect activity ID. To correctly resolve these IDs in offline mode, you must provide your Garmin GDPR export data:
+1. Request a GDPR export from Garmin Connect.
+2. Extract the `*_summarizedActivities.json` files.
+3. Place them in the `gc-export/` directory within the project root.
+The tool will automatically parse these files to map the filenames to the correct Garmin activity IDs based on UTC start times.
+
 ## Usage (Userscripts)
 
 1. Install the userscript into your userscript manager of choice
