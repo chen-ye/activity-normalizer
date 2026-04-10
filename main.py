@@ -1,5 +1,8 @@
 import os
 import argparse
+import json
+import zipfile
+import requests
 from datetime import date, timedelta
 from dotenv import load_dotenv
 
@@ -7,6 +10,65 @@ from clients.intervals_client import IntervalsClient
 from clients.garmin_client import GarminClient
 from clients.rwgps_client import RWGPSClient
 from synchronizer import ActivitySynchronizer
+
+def download_and_extract_gc_export(url: str):
+    cache_dir = "download_cache"
+    os.makedirs(cache_dir, exist_ok=True)
+    zip_path = os.path.join(cache_dir, "gc_export_cached.zip")
+    
+    if not os.path.exists(zip_path):
+        print(f"Downloading Garmin Connect export from {url}...")
+        try:
+            # Using standard requests here for the large download
+            with requests.get(url, stream=True) as r:
+                r.raise_for_status()
+                total_length = int(r.headers.get("content-length", 0))
+                with open(zip_path, 'wb') as f:
+                    from rich.progress import Progress, DownloadColumn, TransferSpeedColumn, TextColumn, BarColumn, TimeRemainingColumn
+                    with Progress(
+                        TextColumn("[bold blue]{task.fields[filename]}", justify="right"),
+                        BarColumn(bar_width=None),
+                        "[progress.percentage]{task.percentage:>3.1f}%",
+                        "•",
+                        DownloadColumn(),
+                        "•",
+                        TransferSpeedColumn(),
+                        "•",
+                        TimeRemainingColumn(),
+                    ) as progress:
+                        task = progress.add_task("Downloading...", filename="gc_export_cached.zip", total=total_length or None)
+                        for chunk in r.iter_content(chunk_size=8192):
+                            f.write(chunk)
+                            progress.update(task, advance=len(chunk))
+            print(f"Downloaded Garmin export to {zip_path}")
+        except Exception as e:
+            print(f"Error downloading Garmin export: {e}")
+            return
+    else:
+        print(f"Using cached Garmin export: {zip_path}")
+
+    print("Extracting summarized activities from zip...")
+    export_dir = "gc-export"
+    os.makedirs(export_dir, exist_ok=True)
+    
+    try:
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            count = 0
+            for file_info in zip_ref.infolist():
+                if file_info.filename.endswith("_summarizedActivities.json"):
+                    # Extract to the gc-export folder, flattening the directory structure
+                    # Get just the filename
+                    filename = os.path.basename(file_info.filename)
+                    if not filename:
+                        continue
+                    
+                    target_path = os.path.join(export_dir, filename)
+                    with zip_ref.open(file_info) as source, open(target_path, "wb") as target:
+                        target.write(source.read())
+                    count += 1
+            print(f"Extracted {count} activity summary files to {export_dir}/")
+    except Exception as e:
+        print(f"Error extracting Garmin export: {e}")
 
 def main():
     load_dotenv()
@@ -16,7 +78,12 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="Do not actually update activities")
     parser.add_argument("--offline-garmin", action="store_true", help="Disable direct Garmin API usage and output gc-changes.json")
     parser.add_argument("--offline-rwgps", action="store_true", help="Disable direct RWGPS API usage and output rwgps-changes.json")
+    parser.add_argument("--gc-export-url", type=str, help="URL to download and extract Garmin Connect GDPR export zip")
     args = parser.parse_args()
+
+    # Handle GC Export Download/Extraction first
+    if args.gc_export_url:
+        download_and_extract_gc_export(args.gc_export_url)
 
     # Load credentials from environment
     intervals_athlete_id = os.getenv("INTERVALS_ATHLETE_ID")

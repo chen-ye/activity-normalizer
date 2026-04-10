@@ -28,6 +28,7 @@ gc-changes.json
 rwgps-changes.json
 gear-mappings.json
 rwgps_tokens.json
+download_cache/
 
 # Tooling
 .pytest_cache/
