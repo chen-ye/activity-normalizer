@@ -6,7 +6,7 @@ try:
     import readline
 except ImportError:
     pass
-from datetime import date, timezone
+from datetime import date, timezone, datetime
 from typing import List, Optional, Dict, Tuple
 from clients.intervals_client import IntervalsClient
 from clients.garmin_client import GarminClient
@@ -89,20 +89,17 @@ class ActivitySynchronizer:
         
         print("Loading Garmin Connect GDPR export for ID resolution...")
         export_map = []
-        # Look for export files in gc-export/
         export_files = glob.glob("gc-export/*summarizedActivities.json")
         for file_path in export_files:
             try:
                 with open(file_path, "r") as f:
                     data = json.load(f)
-                    # GDPR export structure is an array containing an object with summarizedActivitiesExport
                     for export_obj in data:
                         activities = export_obj.get("summarizedActivitiesExport", [])
                         for activity in activities:
                             activity_id = str(activity.get("activityId"))
                             start_time_gmt = activity.get("startTimeGmt")
                             if activity_id and start_time_gmt:
-                                # startTimeGmt is in ms
                                 timestamp = start_time_gmt / 1000.0
                                 export_map.append((timestamp, activity_id))
             except Exception as e:
@@ -115,14 +112,10 @@ class ActivitySynchronizer:
         if not truth.external_id:
             return ""
         
-        # If the external_id is already a numeric ID, return it
         if not truth.external_id.endswith(".fit"):
             return truth.external_id
         
-        # Otherwise, we need to resolve it from the GDPR export using start time
         self._load_garmin_export_map()
-        
-        # truth.start_time is timezone-aware UTC datetime
         target_timestamp = truth.start_time.timestamp()
         
         best_match = None
@@ -148,7 +141,6 @@ class ActivitySynchronizer:
         if truth.gear_id in self.gear_mappings and "garmin_connect_id" in self.gear_mappings[truth.gear_id]:
             return self.gear_mappings[truth.gear_id].get("garmin_connect_id", "")
         
-        # Mapping missing, prompt user
         gear_name = truth.gear_name or f"ID {truth.gear_id}"
         print(f"\nGarmin mapping missing for Intervals.icu gear: {gear_name} ({truth.gear_id})")
         gc_id = input(f"Enter Garmin Connect gear ID for {gear_name}: ").strip()
@@ -166,7 +158,6 @@ class ActivitySynchronizer:
         if truth.gear_id in self.gear_mappings and "rwgps_id" in self.gear_mappings[truth.gear_id]:
             return self.gear_mappings[truth.gear_id].get("rwgps_id", "")
         
-        # Mapping missing, prompt user
         gear_name = truth.gear_name or f"ID {truth.gear_id}"
         print(f"\nRWGPS mapping missing for Intervals.icu gear: {gear_name} ({truth.gear_id})")
         rwgps_id = input(f"Enter Ride with GPS gear ID for {gear_name}: ").strip()
@@ -189,6 +180,87 @@ class ActivitySynchronizer:
 
     def _map_to_rwgps_type(self, icu_type: str) -> str:
         return ICU_TO_RWGPS_TYPES.get(icu_type, "cycling:generic")
+
+    def report_redundant_activities(self, start_date: date, end_date: date, offline_garmin: bool, offline_rwgps: bool):
+        print(f"Reporting redundant activities from {start_date} to {end_date}")
+        report = {
+            "garmin_connect": [],
+            "ridewithgps": []
+        }
+
+        # 1. Garmin Connect Redundancies
+        garmin_items = []
+        if offline_garmin:
+            self._load_garmin_export_map()
+            for ts, activity_id in self._garmin_export_map:
+                dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+                if start_date <= dt.date() <= end_date:
+                    garmin_items.append({
+                        "id": activity_id,
+                        "time": dt.isoformat(),
+                        "timestamp": ts
+                    })
+        elif self.garmin:
+            activities = self.garmin.get_activities(start_date, end_date)
+            for a in activities:
+                garmin_items.append({
+                    "id": a.platform_id,
+                    "time": a.start_time.isoformat(),
+                    "timestamp": a.start_time.timestamp()
+                })
+        
+        if garmin_items:
+            garmin_items.sort(key=lambda x: x["timestamp"])
+            duplicates = []
+            current_group = []
+            for i in range(len(garmin_items)):
+                if not current_group:
+                    current_group.append(garmin_items[i])
+                else:
+                    if abs(garmin_items[i]["timestamp"] - current_group[-1]["timestamp"]) < 120:
+                        current_group.append(garmin_items[i])
+                    else:
+                        if len(current_group) > 1:
+                            duplicates.append(current_group)
+                        current_group = [garmin_items[i]]
+            if len(current_group) > 1:
+                duplicates.append(current_group)
+            report["garmin_connect"] = duplicates
+
+        # 2. Ride with GPS Redundancies
+        rwgps_items = []
+        # We always need to fetch RWGPS to see duplicates unless we have an export
+        if self.rwgps:
+            activities = self.rwgps.get_activities(start_date, end_date)
+            for a in activities:
+                rwgps_items.append({
+                    "id": a.platform_id,
+                    "name": a.name,
+                    "time": a.start_time.isoformat(),
+                    "timestamp": a.start_time.timestamp()
+                })
+        
+        if rwgps_items:
+            rwgps_items.sort(key=lambda x: x["timestamp"])
+            duplicates = []
+            current_group = []
+            for i in range(len(rwgps_items)):
+                if not current_group:
+                    current_group.append(rwgps_items[i])
+                else:
+                    if abs(rwgps_items[i]["timestamp"] - current_group[-1]["timestamp"]) < 120:
+                        current_group.append(rwgps_items[i])
+                    else:
+                        if len(current_group) > 1:
+                            duplicates.append(current_group)
+                        current_group = [rwgps_items[i]]
+            if len(current_group) > 1:
+                duplicates.append(current_group)
+            report["ridewithgps"] = duplicates
+
+        with open("redundant-activities.json", "w") as f:
+            json.dump(report, f, indent=2)
+        print(f"Redundancy report written to redundant-activities.json")
 
     def sync_names(self, start_date: date, end_date: date, dry_run: bool = True, offline_garmin: bool = False, offline_rwgps: bool = False):
         print(f"Syncing from {start_date} to {end_date} (Dry run: {dry_run}, Offline Garmin: {offline_garmin}, Offline RWGPS: {offline_rwgps})")

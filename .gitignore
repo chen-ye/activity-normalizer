@@ -26,6 +26,7 @@ gc-export/
 # Output files
 gc-changes.json
 rwgps-changes.json
+redundant-activities.json
 gear-mappings.json
 rwgps_tokens.json
 download_cache/

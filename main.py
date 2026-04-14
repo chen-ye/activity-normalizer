@@ -79,6 +79,7 @@ def main():
     parser.add_argument("--offline-garmin", action="store_true", help="Disable direct Garmin API usage and output gc-changes.json")
     parser.add_argument("--offline-rwgps", action="store_true", help="Disable direct RWGPS API usage and output rwgps-changes.json")
     parser.add_argument("--gc-export-url", type=str, help="URL to download and extract Garmin Connect GDPR export zip")
+    parser.add_argument("--report-redundant", action="store_true", help="Detect and report overlapping redundant activities")
     args = parser.parse_args()
 
     # Handle GC Export Download/Extraction first
@@ -122,6 +123,14 @@ def main():
     end_date = date.today()
     start_date = end_date - timedelta(days=args.days)
     
+    if args.report_redundant:
+        sync.report_redundant_activities(
+            start_date, 
+            end_date, 
+            offline_garmin=args.offline_garmin,
+            offline_rwgps=args.offline_rwgps
+        )
+
     sync.sync_names(
         start_date, 
         end_date, 
